@@ -49,7 +49,8 @@ impl epi::App for RaysApp {
         if let Some(ref rx) = self.receiver {
             for pixel in rx.try_iter() {
                 let [r, g, b, a] = pixel.color;
-                self.buffer[pixel.position[0] + pixel.position[1] * self.size.x as usize] =
+                self.buffer[pixel.position[0]
+                    + (self.size.y as usize - pixel.position[1] - 1) * self.size.x as usize] =
                     Color32::from_rgba_unmultiplied(r, g, b, a);
                 self.texture = None;
             }
@@ -74,12 +75,12 @@ impl epi::App for RaysApp {
         egui::SidePanel::left("left panel").show(ctx, |ui| {
             ui.label("Some text");
             if ui.button("Submit").clicked() {
-                let (width, height) = (1920, 1080);
+                let (width, height) = (256, 256);
                 self.buffer.clear();
                 let rx = rays_core::PathTracer::build([width, height]).run();
                 self.receiver = Some(rx);
                 self.texture = None;
-                self.buffer = vec![Color32::TEMPORARY_COLOR; width * height];
+                self.buffer = vec![Color32::TRANSPARENT; width * height];
                 self.size = Vec2::new(width as f32, height as f32);
             }
         });

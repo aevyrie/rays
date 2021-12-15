@@ -1,5 +1,4 @@
 use crossbeam_channel::{bounded, Receiver, Sender};
-use rand::prelude::*;
 use rayon::prelude::*;
 
 pub struct PathTracer {
@@ -29,8 +28,11 @@ impl PathTracer {
                 .par_bridge()
                 .for_each(|index| {
                     let position = [index % self.size[0], index / self.size[0]];
-                    let mut color: [u8; 4] = [0; 4];
-                    rand::thread_rng().fill_bytes(&mut color);
+                    let r = (position[0] as f64 / (self.size[0] - 1) as f64 * 255.0) as u8;
+                    let g = (position[1] as f64 / (self.size[1] - 1) as f64 * 255.0) as u8;
+                    let b = 63;
+                    let a = 255;
+                    let color: [u8; 4] = [r, g, b, a];
                     self.sender.send(Pixel { position, color }).unwrap();
                 });
         });
