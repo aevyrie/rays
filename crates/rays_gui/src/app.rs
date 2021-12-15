@@ -1,4 +1,9 @@
-use eframe::{egui, epi};
+use crossbeam_channel::Receiver;
+use eframe::{
+    egui::{self, Color32, TextureId, Vec2},
+    epi,
+};
+use rays_core::Pixel;
 
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
 #[cfg_attr(feature = "persistence", derive(serde::Deserialize, serde::Serialize))]
@@ -7,7 +12,10 @@ use eframe::{egui, epi};
 pub struct RaysApp {
     // this how you opt-out of serialization of a member
     //#[cfg_attr(feature = "persistence", serde(skip))]
-    texture: Option<(egui::Vec2, egui::TextureId)>,
+    texture: Option<TextureId>,
+    buffer: Vec<Color32>,
+    size: Vec2,
+    receiver: Option<Receiver<Pixel>>,
 }
 
 impl epi::App for RaysApp {
@@ -38,38 +46,49 @@ impl epi::App for RaysApp {
 
     /// Called each time the UI needs repainting, which may be many times per second.
     fn update(&mut self, ctx: &egui::CtxRef, frame: &mut epi::Frame<'_>) {
+        if let Some(ref rx) = self.receiver {
+            for pixel in rx.try_iter() {
+                let [r, g, b, a] = pixel.color;
+                self.buffer[pixel.position[0] + pixel.position[1] * self.size.x as usize] =
+                    Color32::from_rgba_unmultiplied(r, g, b, a);
+                self.texture = None;
+            }
+        }
+        self.texture = if self.texture.is_some() {
+            self.texture
+        } else if self.size != Vec2::ZERO {
+            // Allocate a texture:
+            let texture_id = frame.tex_allocator().alloc_srgba_premultiplied(
+                (self.size.x as usize, self.size.y as usize),
+                &self.buffer,
+            );
+            if let Some(texture) = self.texture {
+                frame.tex_allocator().free(texture)
+            }
+            self.texture = Some(texture_id);
+            ctx.request_repaint();
+            Some(texture_id)
+        } else {
+            None
+        };
         egui::SidePanel::left("left panel").show(ctx, |ui| {
             ui.label("Some text");
+            if ui.button("Submit").clicked() {
+                let (width, height) = (1920, 1080);
+                self.buffer.clear();
+                let rx = rays_core::PathTracer::build([width, height]).run();
+                self.receiver = Some(rx);
+                self.texture = None;
+                self.buffer = vec![Color32::TEMPORARY_COLOR; width * height];
+                self.size = Vec2::new(width as f32, height as f32);
+            }
         });
         egui::Area::new("main area").show(ctx, |ui| {
             if let Some(texture) = self.texture {
                 ui.add(egui::Image::new(
-                    texture.1,
+                    texture,
                     [ctx.available_rect().width(), ctx.available_rect().height()],
                 ));
-            } else {
-                let size =
-                    egui::Vec2::new(ctx.available_rect().width(), ctx.available_rect().height());
-                let pixels: Vec<_> = vec![100; size.x as usize * size.y as usize * 4]
-                    .chunks_exact(4)
-                    .enumerate()
-                    .map(|(n, _p)| {
-                        egui::Color32::from_rgba_unmultiplied(
-                            (255.0 * (n as f32 / size.y) / size.y) as u8,
-                            (255.0 * (n as f32 % size.x) / size.y) as u8,
-                            127,
-                            255,
-                        )
-                    })
-                    .collect();
-                let texture_size = size;
-
-                // Allocate a texture:
-                let texture_id = frame
-                    .tex_allocator()
-                    .alloc_srgba_premultiplied((size.x as usize, size.y as usize), &pixels);
-
-                self.texture = Some((texture_size, texture_id));
             }
         });
     }

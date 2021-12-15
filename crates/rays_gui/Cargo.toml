@@ -13,6 +13,8 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 eframe = "0.15.0"                                                 # Gives us egui, epi and web+native backends
 serde = { version = "1", features = ["derive"], optional = true }
+rays_core = { path = "../rays_core" }
+crossbeam-channel = "0.5"
 
 [features]
 default = []
