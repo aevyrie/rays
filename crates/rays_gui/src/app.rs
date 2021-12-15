@@ -46,6 +46,32 @@ impl epi::App for RaysApp {
 
     /// Called each time the UI needs repainting, which may be many times per second.
     fn update(&mut self, ctx: &egui::CtxRef, frame: &mut epi::Frame<'_>) {
+        self.update_texture(frame, ctx);
+        egui::SidePanel::left("left panel").show(ctx, |ui| {
+            ui.label("Some text");
+            if ui.button("Submit").clicked() {
+                let (width, height) = (256, 256);
+                self.buffer.clear();
+                let rx = rays_core::PathTracer::build([width, height]).run();
+                self.receiver = Some(rx);
+                self.texture = None;
+                self.buffer = vec![Color32::TRANSPARENT; width * height];
+                self.size = Vec2::new(width as f32, height as f32);
+            }
+        });
+        egui::Area::new("main area").show(ctx, |ui| {
+            if let Some(texture) = self.texture {
+                ui.add(egui::Image::new(
+                    texture,
+                    [ctx.available_rect().width(), ctx.available_rect().height()],
+                ));
+            }
+        });
+    }
+}
+
+impl RaysApp {
+    fn update_texture(&mut self, frame: &mut epi::Frame<'_>, ctx: &egui::CtxRef) {
         if let Some(ref rx) = self.receiver {
             for pixel in rx.try_iter() {
                 let [r, g, b, a] = pixel.color;
@@ -72,25 +98,5 @@ impl epi::App for RaysApp {
         } else {
             None
         };
-        egui::SidePanel::left("left panel").show(ctx, |ui| {
-            ui.label("Some text");
-            if ui.button("Submit").clicked() {
-                let (width, height) = (256, 256);
-                self.buffer.clear();
-                let rx = rays_core::PathTracer::build([width, height]).run();
-                self.receiver = Some(rx);
-                self.texture = None;
-                self.buffer = vec![Color32::TRANSPARENT; width * height];
-                self.size = Vec2::new(width as f32, height as f32);
-            }
-        });
-        egui::Area::new("main area").show(ctx, |ui| {
-            if let Some(texture) = self.texture {
-                ui.add(egui::Image::new(
-                    texture,
-                    [ctx.available_rect().width(), ctx.available_rect().height()],
-                ));
-            }
-        });
     }
 }
