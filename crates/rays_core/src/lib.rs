@@ -1,6 +1,8 @@
 use crossbeam_channel::{bounded, Receiver, Sender};
 use rayon::prelude::*;
 
+mod ray;
+
 pub struct PathTracer {
     size: [usize; 2],
     sender: Sender<Pixel>,
