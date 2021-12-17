@@ -11,7 +11,10 @@ name = "rays_gui_lib"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-eframe = "0.15.0"                                                 # Gives us egui, epi and web+native backends
+#eframe = "0.15.0"
+#eframe = { git = "https://github.com/emilk/egui" }                #, rev =
+#"c71090473b0ca19a6110de793eed9e26236239c2" }
+eframe = { git = "https://github.com/aevyrie/egui" }
 serde = { version = "1", features = ["derive"], optional = true }
 rays_core = { path = "../rays_core" }
 crossbeam-channel = "0.5"

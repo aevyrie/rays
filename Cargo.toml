@@ -3,3 +3,6 @@ members = ["crates/*"]
 
 [profile.release]
 lto = "on"
+
+[profile.dev]
+opt-level = 3

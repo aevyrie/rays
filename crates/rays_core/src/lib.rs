@@ -25,6 +25,7 @@ impl PathTracer {
     }
 
     pub fn run(self) -> Receiver<Pixel> {
+        #[allow(unused_must_use)]
         std::thread::spawn(move || {
             (0..self.size[0] * self.size[1])
                 .par_bridge()
@@ -35,7 +36,7 @@ impl PathTracer {
                     let b = 63;
                     let a = 255;
                     let color: [u8; 4] = [r, g, b, a];
-                    self.sender.send(Pixel { position, color }).unwrap();
+                    self.sender.send(Pixel { position, color });
                 });
         });
         self.receiver

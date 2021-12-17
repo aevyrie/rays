@@ -1,11 +1,15 @@
-use std::{any::Any, collections::HashMap};
-
 use crossbeam_channel::Receiver;
 use eframe::{
-    egui::{self, Color32, TextureId},
+    egui::{
+        self,
+        plot::{self, Plot, PlotImage},
+        CentralPanel, Color32, CtxRef, DragValue, Layout, TextureId, TopBottomPanel,
+    },
     epi,
 };
 use rays_core::{PathTracer, Pixel};
+
+//mod event_system;
 
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
 #[cfg_attr(feature = "persistence", derive(serde::Deserialize, serde::Serialize))]
@@ -17,9 +21,8 @@ pub struct RaysApp {
     buffer: Vec<Color32>,
     width: usize,
     height: usize,
+    grid: bool,
     receiver: Option<Receiver<Pixel>>,
-    events: EventQueue,
-    zoom: f32,
 }
 impl Default for RaysApp {
     fn default() -> Self {
@@ -28,9 +31,8 @@ impl Default for RaysApp {
             buffer: Vec::new(),
             width: 800,
             height: 600,
+            grid: false,
             receiver: None,
-            events: EventQueue::default(),
-            zoom: 1.0,
         }
     }
 }
@@ -43,7 +45,7 @@ impl epi::App for RaysApp {
     /// Called once before the first frame.
     fn setup(
         &mut self,
-        _ctx: &egui::CtxRef,
+        _ctx: &CtxRef,
         _frame: &mut epi::Frame<'_>,
         _storage: Option<&dyn epi::Storage>,
     ) {
@@ -68,118 +70,73 @@ impl epi::App for RaysApp {
             buffer,
             width,
             height,
+            grid,
             receiver,
-            events,
-            zoom,
         } = self;
-
-        ctx.set_debug_on_hover(cfg!(debug_assertions));
 
         update_texture(texture, buffer, width, height, receiver, frame, ctx);
 
-        egui::TopBottomPanel::top("top panel").show(ctx, |ui| {
+        // Build UI
+        ctx.set_debug_on_hover(cfg!(debug_assertions));
+
+        TopBottomPanel::top("top panel").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                if ui.button("Submit").clicked() {
-                    buffer.clear();
-                    *receiver = Some(PathTracer::build([*width, *height]).run());
-                    *texture = None;
-                    *buffer = vec![Color32::TRANSPARENT; *width * *height];
-                }
-                ui.add_space(20.0);
-                ui.label("Zoom");
-                if ui.button("Fit").clicked() {
-                    events.notify(Zoom::Fit)
-                }
-                if ui.button("Fill").clicked() {
-                    events.notify(Zoom::Fill)
-                }
-                if ui.button("1:1").clicked() {
-                    events.notify(Zoom::One)
-                }
-            });
-        });
-        egui::SidePanel::left("left panel").show(ctx, |ui| {
-            // = egui::vec2(20.0, 20.0);
-            ui.heading("Render Settings");
-            ui.add_space(10.0);
-            ui.horizontal(|ui| {
-                ui.label("Width");
+                // Add widgets left to right, from the left edge
+                ui.label("Resolution");
                 ui.add(
-                    egui::DragValue::new(width)
+                    DragValue::new(width)
                         .speed(1.0)
                         .fixed_decimals(0)
                         .clamp_range(1..=10_000),
                 );
-            });
-            ui.horizontal(|ui| {
-                ui.label("Height");
+                ui.label("x");
                 ui.add(
-                    egui::DragValue::new(height)
+                    DragValue::new(height)
                         .speed(1.0)
                         .fixed_decimals(0)
                         .clamp_range(1..=10_000),
                 );
+                ui.add_space(10.0);
+                ui.checkbox(grid, "Grid");
+                // Add widgets right to left, from the right edge
+                ui.expand_to_include_rect(ui.available_rect_before_wrap());
+                ui.with_layout(Layout::right_to_left(), |ui| {
+                    if ui.button("Render").clicked() {
+                        buffer.clear();
+                        *receiver = Some(PathTracer::build([*width, *height]).run());
+                        *texture = None;
+                        *buffer = vec![Color32::TRANSPARENT; *width * *height];
+                    };
+                });
             });
         });
-        egui::CentralPanel::default().show(ctx, |ui| {
-            egui::ScrollArea::both().show(ui, |ui| {
-                if let Some(texture) = self.texture {
-                    let padding = 5.0;
-                    let h_zoom = (ctx.available_rect().height() - padding) / *height as f32;
-                    let w_zoom = (ctx.available_rect().width() - padding) / *width as f32;
-                    for event in events.read() {
-                        match event {
-                            Zoom::Fit => *zoom = w_zoom.min(h_zoom) * 0.95,
-                            Zoom::Fill => *zoom = w_zoom.max(h_zoom) * 0.95,
-                            Zoom::One => *zoom = 1.0,
-                        }
-                    }
-                    let scaled_img_size = (*width as f32 * *zoom, *height as f32 * *zoom);
-                    ui.centered_and_justified(|ui| {
-                        ui.image(texture, scaled_img_size);
-                    });
-                }
+
+        CentralPanel::default()
+            .frame(egui::Frame {
+                fill: ctx.style().visuals.extreme_bg_color,
+                ..Default::default()
             })
-        });
-    }
-}
-
-#[derive(Clone, Debug)]
-#[non_exhaustive]
-enum Zoom {
-    Fit,
-    Fill,
-    One,
-}
-
-#[derive(Default)]
-struct EventQueue {
-    events: HashMap<String, Box<dyn Any>>,
-}
-impl EventQueue {
-    fn notify<T: 'static>(&mut self, event: T) {
-        match self.events.get_mut(std::any::type_name::<T>()) {
-            Some(list) => {
-                let list = list.downcast_mut::<Vec<T>>().unwrap();
-                list.push(event);
-            }
-            None => {
-                self.events
-                    .insert(std::any::type_name::<T>().into(), Box::new(vec![event]));
-            }
-        }
-    }
-    fn read<T: 'static + Clone>(&mut self) -> std::vec::IntoIter<T> {
-        match self.events.get_mut(std::any::type_name::<T>()) {
-            Some(list) => list
-                .downcast_mut::<Vec<T>>()
-                .unwrap()
-                .drain(0..)
-                .collect::<Vec<T>>()
-                .into_iter(),
-
-            None => Vec::new().into_iter(),
-        }
+            .show(ctx, |ui| {
+                //CentralPanel::default().show_inside(ui, |ui| {
+                if let Some(texture) = self.texture {
+                    let image = PlotImage::new(
+                        texture,
+                        plot::Value::new(0.0, 0.0),
+                        [*width as f32, *height as f32],
+                    );
+                    let plot = Plot::new("Image area")
+                        .show_x(false)
+                        .show_y(false)
+                        .show_background(false)
+                        .show_axes([*grid, *grid])
+                        .data_aspect(1.0);
+                    plot.show(ui, |plot_ui| {
+                        plot_ui.image(image.name("Render result"));
+                    })
+                    .response;
+                }
+                //});
+            });
     }
 }
 
