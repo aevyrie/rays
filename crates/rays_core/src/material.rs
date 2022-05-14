@@ -4,7 +4,6 @@ use glam::Vec3A;
 use crate::{
     color::Color,
     ray::{self, RayHit},
-    Sdf,
 };
 
 pub trait Material: Send + Sync + DynClone {
@@ -17,7 +16,6 @@ pub trait Material: Send + Sync + DynClone {
 
 // Implements Clone for the boxed trait objects
 clone_trait_object!(Material);
-clone_trait_object!(Sdf);
 
 #[derive(Clone, Debug)]
 pub struct Lambertian {
@@ -32,6 +30,27 @@ impl Lambertian {
 impl Material for Lambertian {
     fn scatter(&self, hit: &RayHit) -> Vec3A {
         hit.normal + ray::rand_on_unit_sphere()
+    }
+
+    fn attenuation(&self) -> &Color {
+        &self.albedo
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Metal {
+    albedo: Color,
+}
+
+impl Metal {
+    pub fn new(albedo: Color) -> Metal {
+        Metal { albedo }
+    }
+}
+
+impl Material for Metal {
+    fn scatter(&self, hit: &RayHit) -> Vec3A {
+        hit.in_dir.reflect(hit.normal)
     }
 
     fn attenuation(&self) -> &Color {

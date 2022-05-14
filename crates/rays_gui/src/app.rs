@@ -12,7 +12,10 @@ use eframe::{
     App, CreationContext, Frame,
 };
 use glam::Vec3;
-use rays_core::{material::Lambertian, Camera, PathTracer, Pixel, Scene, SdfObject, Sphere};
+use rays_core::{
+    material::{Lambertian, Metal},
+    Camera, PathTracer, Pixel, Scene, SdfObject, Sphere,
+};
 
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
 #[cfg_attr(feature = "persistence", derive(serde::Deserialize, serde::Serialize))]
@@ -45,11 +48,15 @@ impl RaysApp {
 
         let matl1 = Arc::new(Lambertian::new([0.99, 0.1, 0.1, 1.0].into()));
         let matl2 = Arc::new(Lambertian::new([0.1, 0.9, 0.2, 1.0].into()));
+        let matl3 = Arc::new(Metal::new([0.1, 0.1, 0.9, 1.0].into()));
+        let matl4 = Arc::new(Metal::new([0.3, 0.3, 0.3, 1.0].into()));
 
         let scene = Scene {
             camera: Camera::from_aspect_ratio(input_width as f32 / input_height as f32),
             objects: vec![
                 SdfObject::new(Sphere::new(Vec3::new(0.0, 0.0, -1.0), 0.5), matl1),
+                SdfObject::new(Sphere::new(Vec3::new(1.0, 0.0, -1.0), 0.5), matl3),
+                SdfObject::new(Sphere::new(Vec3::new(-1.0, 0.0, -1.0), 0.5), matl4),
                 SdfObject::new(Sphere::new(Vec3::new(0.0, -100.5, -1.0), 100.0), matl2),
             ],
             materials: vec![],

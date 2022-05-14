@@ -1,6 +1,6 @@
 use color::Color;
 use crossbeam_channel::{unbounded, Receiver, Sender};
-use dyn_clone::DynClone;
+use dyn_clone::{clone_trait_object, DynClone};
 use glam::{Mat4, Vec3, Vec3A, Vec4, Vec4Swizzles};
 use material::Material;
 use ray::Ray;
@@ -133,6 +133,8 @@ impl SdfObject {
         }
     }
 }
+
+clone_trait_object!(Sdf);
 
 #[derive(Clone)]
 pub struct Scene {

@@ -14,6 +14,9 @@ impl Ray {
     pub fn at(&self, t: f32) -> Vec3A {
         self.origin + self.direction * t
     }
+    pub fn reflect(&self, normal: Vec3A) -> Vec3A {
+        self.direction - 2.0 * self.direction.dot(normal) * normal
+    }
     pub fn color(&self, scene: &Scene, max_bounces: u8) -> Color {
         if max_bounces == 0 {
             return [0.0, 0.0, 0.0, 1.0].into();
@@ -62,6 +65,7 @@ impl Ray {
                     RayHit {
                         position: ray_pos,
                         normal: scene.objects[index].normal(ray_pos),
+                        in_dir: self.to_owned(),
                     },
                     scene.objects[index].material.clone(),
                 ));
@@ -85,6 +89,7 @@ impl Ray {
 }
 
 pub struct RayHit {
+    pub in_dir: Ray,
     pub position: Vec3A,
     pub normal: Vec3A,
 }
