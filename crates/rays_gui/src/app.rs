@@ -1,15 +1,18 @@
+use std::sync::Arc;
+
 use crossbeam_channel::Receiver;
 use eframe::{
     egui::{
         self,
         plot::{self, Plot, PlotImage},
-        CentralPanel, Color32, CtxRef, DragValue, Layout, TextureId, TopBottomPanel,
+        CentralPanel, Color32, Context, DragValue, SidePanel,
     },
-    epi,
+    emath::{Pos2, Rect},
+    epaint::{ColorImage, ImageDelta, TextureHandle},
+    App, CreationContext, Frame,
 };
-use rays_core::{PathTracer, Pixel};
-
-//mod event_system;
+use glam::Vec3;
+use rays_core::{material::Lambertian, Camera, PathTracer, Pixel, Scene, SdfObject, Sphere};
 
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
 #[cfg_attr(feature = "persistence", derive(serde::Deserialize, serde::Serialize))]
@@ -17,46 +20,62 @@ use rays_core::{PathTracer, Pixel};
 pub struct RaysApp {
     // this how you opt-out of serialization of a member
     //#[cfg_attr(feature = "persistence", serde(skip))]
-    texture: Option<TextureId>,
-    buffer: Vec<Color32>,
-    width: usize,
-    height: usize,
+    texture: TextureHandle,
+    buffer: Vec<u8>,
+    input_width: u32,
+    input_height: u32,
+    samples: usize,
+    max_bounces: u8,
     grid: bool,
-    receiver: Option<Receiver<Pixel>>,
+    receiver: Receiver<Pixel>,
+    scene: Scene,
 }
-impl Default for RaysApp {
-    fn default() -> Self {
+impl RaysApp {
+    pub fn new(cc: &CreationContext<'_>) -> Self {
+        let input_width = 400u32;
+        let input_height = 300u32;
+
+        let texture = cc.egui_ctx.load_texture(
+            "render area",
+            ColorImage::new(
+                [input_width as usize, input_height as usize],
+                Color32::TRANSPARENT,
+            ),
+        );
+
+        let matl1 = Arc::new(Lambertian::new([0.99, 0.1, 0.1, 1.0].into()));
+        let matl2 = Arc::new(Lambertian::new([0.1, 0.9, 0.2, 1.0].into()));
+
+        let scene = Scene {
+            camera: Camera::from_aspect_ratio(input_width as f32 / input_height as f32),
+            objects: vec![
+                SdfObject::new(Sphere::new(Vec3::new(0.0, 0.0, -1.0), 0.5), matl1),
+                SdfObject::new(Sphere::new(Vec3::new(0.0, -100.5, -1.0), 100.0), matl2),
+            ],
+            materials: vec![],
+        };
+
+        let samples = 4;
+        let max_bounces = 16;
+
         RaysApp {
-            texture: None,
-            buffer: Vec::new(),
-            width: 800,
-            height: 600,
-            grid: false,
-            receiver: None,
+            texture,
+            buffer: vec![0; (input_width * input_height * 4) as usize],
+            grid: true,
+            receiver: PathTracer::build([input_width, input_height]).run(
+                scene.clone(),
+                samples,
+                max_bounces,
+            ),
+            scene,
+            input_width,
+            input_height,
+            samples,
+            max_bounces,
         }
     }
 }
-
-impl epi::App for RaysApp {
-    fn name(&self) -> &str {
-        "Rays"
-    }
-
-    /// Called once before the first frame.
-    fn setup(
-        &mut self,
-        _ctx: &CtxRef,
-        _frame: &mut epi::Frame<'_>,
-        _storage: Option<&dyn epi::Storage>,
-    ) {
-        // Load previous app state (if any).
-        // Note that you must enable the `persistence` feature for this to work.
-        #[cfg(feature = "persistence")]
-        if let Some(storage) = _storage {
-            *self = epi::get_value(storage, epi::APP_KEY).unwrap_or_default()
-        }
-    }
-
+impl App for RaysApp {
     /// Called by the frame work to save state before shutdown.
     #[cfg(feature = "persistence")]
     fn save(&mut self, storage: &mut dyn epi::Storage) {
@@ -64,113 +83,138 @@ impl epi::App for RaysApp {
     }
 
     /// Called each time the UI needs repainting, which may be many times per second.
-    fn update(&mut self, ctx: &egui::CtxRef, frame: &mut epi::Frame<'_>) {
+    fn update(&mut self, context: &Context, _frame: &mut Frame) {
         let RaysApp {
             texture,
             buffer,
-            width,
-            height,
+            input_width,
+            input_height,
+            samples,
+            max_bounces,
             grid,
             receiver,
+            scene,
         } = self;
 
-        update_texture(texture, buffer, width, height, receiver, frame, ctx);
+        update_texture(texture, buffer, receiver, context);
 
         // Build UI
-        ctx.set_debug_on_hover(cfg!(debug_assertions));
+        context.set_debug_on_hover(cfg!(debug_assertions));
 
-        TopBottomPanel::top("top panel").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                // Add widgets left to right, from the left edge
-                ui.label("Resolution");
-                ui.add(
-                    DragValue::new(width)
-                        .speed(1.0)
-                        .fixed_decimals(0)
-                        .clamp_range(1..=10_000),
-                );
-                ui.label("x");
-                ui.add(
-                    DragValue::new(height)
-                        .speed(1.0)
-                        .fixed_decimals(0)
-                        .clamp_range(1..=10_000),
-                );
+        SidePanel::right("right panel").show(context, |ui| {
+            ui.vertical(|ui| {
+                ui.collapsing("Resolution", |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("Width");
+                        ui.add(
+                            DragValue::new(input_width)
+                                .speed(10.0)
+                                .fixed_decimals(0)
+                                .clamp_range(1..=10_000usize),
+                        );
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Height");
+                        ui.add(
+                            DragValue::new(input_height)
+                                .speed(10.0)
+                                .fixed_decimals(0)
+                                .clamp_range(1..=10_000usize),
+                        );
+                    });
+                });
+                ui.collapsing("Quality", |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("Max bounces:");
+                        ui.add(
+                            DragValue::new(max_bounces)
+                                .speed(1.0)
+                                .fixed_decimals(0)
+                                .clamp_range(1..=255usize),
+                        );
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Samples:");
+                        ui.add(
+                            DragValue::new(samples)
+                                .speed(1.0)
+                                .fixed_decimals(0)
+                                .clamp_range(1..=10_000usize),
+                        );
+                    });
+                });
+
                 ui.add_space(10.0);
                 ui.checkbox(grid, "Grid");
-                // Add widgets right to left, from the right edge
-                ui.expand_to_include_rect(ui.available_rect_before_wrap());
-                ui.with_layout(Layout::right_to_left(), |ui| {
-                    if ui.button("Render").clicked() {
-                        buffer.clear();
-                        *receiver = Some(PathTracer::build([*width, *height]).run());
-                        *texture = None;
-                        *buffer = vec![Color32::TRANSPARENT; *width * *height];
-                    };
-                });
+
+                if ui.button("Render").clicked() {
+                    buffer.clear();
+                    scene.camera =
+                        Camera::from_aspect_ratio(*input_width as f32 / *input_height as f32);
+                    *receiver = PathTracer::build([*input_width, *input_height]).run(
+                        scene.to_owned(),
+                        *samples,
+                        *max_bounces,
+                    );
+                    *texture = context.load_texture(
+                        "render area",
+                        ColorImage::new(
+                            [*input_width as usize, *input_height as usize],
+                            Color32::TRANSPARENT,
+                        ),
+                    );
+                    *buffer = vec![0; (*input_width * *input_height * 4) as usize];
+                };
             });
         });
 
         CentralPanel::default()
             .frame(egui::Frame {
-                fill: ctx.style().visuals.extreme_bg_color,
+                fill: context.style().visuals.extreme_bg_color,
                 ..Default::default()
             })
-            .show(ctx, |ui| {
+            .show(context, |ui| {
                 //CentralPanel::default().show_inside(ui, |ui| {
-                if let Some(texture) = self.texture {
-                    let image = PlotImage::new(
-                        texture,
-                        plot::Value::new(0.0, 0.0),
-                        [*width as f32, *height as f32],
-                    );
-                    let plot = Plot::new("Image area")
-                        .show_x(false)
-                        .show_y(false)
-                        .show_background(false)
-                        .show_axes([*grid, *grid])
-                        .data_aspect(1.0);
-                    plot.show(ui, |plot_ui| {
-                        plot_ui.image(image.name("Render result"));
-                    })
-                    .response;
-                }
-                //});
+                let image = PlotImage::new(
+                    texture.id(),
+                    plot::Value::new(*input_width as f32 / 2.0, *input_height as f32 / 2.0),
+                    [*input_width as f32, *input_height as f32],
+                )
+                .uv(Rect::from_min_max(Pos2::new(0.0, 1.0), Pos2::new(1.0, 0.0)));
+
+                let plot = Plot::new("Image area")
+                    .show_x(false)
+                    .show_y(false)
+                    .show_background(false)
+                    .show_axes([*grid, *grid])
+                    .data_aspect(1.0);
+                plot.show(ui, |plot_ui| {
+                    plot_ui.image(image.name("Render result"));
+                });
             });
     }
 }
 
 fn update_texture(
-    texture: &mut Option<TextureId>,
-    buffer: &mut Vec<Color32>,
-    width: &mut usize,
-    height: &mut usize,
-    receiver: &mut Option<Receiver<Pixel>>,
-    frame: &mut epi::Frame<'_>,
-    ctx: &egui::CtxRef,
+    texture: &mut TextureHandle,
+    buffer: &mut [u8],
+    receiver: &mut Receiver<Pixel>,
+    ctx: &egui::Context,
 ) {
-    if let Some(ref rx) = receiver {
-        for pixel in rx.try_iter() {
-            let [r, g, b, a] = pixel.color;
-            buffer[pixel.position[0] + pixel.position[1] * *width] =
-                Color32::from_rgba_unmultiplied(r, g, b, a);
-            *texture = None;
-        }
+    let width = texture.size()[0];
+    let height = texture.size()[1];
+    let updated = !receiver.is_empty();
+    for pixel in receiver.try_iter() {
+        let index = pixel.position[0] as usize * 4 + pixel.position[1] as usize * width * 4;
+        buffer[index..(4 + index)].copy_from_slice(&pixel.color);
     }
-    *texture = if texture.is_some() {
-        *texture
-    } else if *width != 0 && *height != 0 && buffer.len() == *width * *height {
-        // Allocate a texture:
-        let texture_id = frame
-            .tex_allocator()
-            .alloc_srgba_premultiplied((*width, *height), &buffer);
-        if let Some(texture) = texture {
-            frame.tex_allocator().free(*texture)
-        }
-        *texture = Some(texture_id);
+    if updated {
+        let image = ColorImage::from_rgba_unmultiplied([width, height], buffer);
+        // TODO: only need to update a section of the texture as data is received. Should probably
+        // change from updating per-pixel, to updating fixed-size chunks of the image as well.
+        ctx.tex_manager()
+            .write()
+            .set(texture.id(), ImageDelta::full(image));
         ctx.request_repaint();
-        Some(texture_id)
-    } else {
-        None
-    };
+    }
 }

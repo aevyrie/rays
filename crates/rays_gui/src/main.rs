@@ -5,10 +5,15 @@
 // When compiling natively:
 #[cfg(not(target_arch = "wasm32"))]
 fn main() {
-    let app = rays_gui_lib::RaysApp::default();
+    use rays_gui_lib::RaysApp;
+
     let native_options = eframe::NativeOptions {
         initial_window_size: Some(eframe::egui::Vec2::new(800.0, 600.0)),
         ..Default::default()
     };
-    eframe::run_native(Box::new(app), native_options);
+    eframe::run_native(
+        "Rays",
+        native_options,
+        Box::new(|cc| Box::new(RaysApp::new(cc))),
+    );
 }
