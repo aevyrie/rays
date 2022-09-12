@@ -23,15 +23,18 @@ pub struct Lambertian {
 }
 
 impl Lambertian {
+    #[inline(always)]
     pub fn new(albedo: Color) -> Self {
         Self { albedo }
     }
 }
 impl Material for Lambertian {
+    #[inline(always)]
     fn scatter(&self, hit: &RayHit) -> Vec3A {
         hit.normal + ray::rand_on_unit_sphere()
     }
 
+    #[inline(always)]
     fn attenuation(&self) -> &Color {
         &self.albedo
     }
@@ -43,16 +46,19 @@ pub struct Metal {
 }
 
 impl Metal {
+    #[inline(always)]
     pub fn new(albedo: Color) -> Metal {
         Metal { albedo }
     }
 }
 
 impl Material for Metal {
+    #[inline(always)]
     fn scatter(&self, hit: &RayHit) -> Vec3A {
         hit.in_dir.reflect(hit.normal)
     }
 
+    #[inline(always)]
     fn attenuation(&self) -> &Color {
         &self.albedo
     }

@@ -35,8 +35,8 @@ pub struct RaysApp {
 }
 impl RaysApp {
     pub fn new(cc: &CreationContext<'_>) -> Self {
-        let input_width = 400u32;
-        let input_height = 300u32;
+        let input_width = 100u32;
+        let input_height = 80u32;
 
         let texture = cc.egui_ctx.load_texture(
             "render area",
@@ -44,6 +44,7 @@ impl RaysApp {
                 [input_width as usize, input_height as usize],
                 Color32::TRANSPARENT,
             ),
+            egui::TextureFilter::Nearest,
         );
 
         let matl1 = Arc::new(Lambertian::new([0.99, 0.1, 0.1, 1.0].into()));
@@ -62,7 +63,7 @@ impl RaysApp {
             materials: vec![],
         };
 
-        let samples = 4;
+        let samples = 32;
         let max_bounces = 16;
 
         RaysApp {
@@ -146,7 +147,7 @@ impl App for RaysApp {
                             DragValue::new(samples)
                                 .speed(1.0)
                                 .fixed_decimals(0)
-                                .clamp_range(1..=10_000usize),
+                                .clamp_range(1..=100_000usize),
                         );
                     });
                 });
@@ -169,6 +170,7 @@ impl App for RaysApp {
                             [*input_width as usize, *input_height as usize],
                             Color32::TRANSPARENT,
                         ),
+                        egui::TextureFilter::Nearest,
                     );
                     *buffer = vec![0; (*input_width * *input_height * 4) as usize];
                 };
@@ -184,7 +186,7 @@ impl App for RaysApp {
                 //CentralPanel::default().show_inside(ui, |ui| {
                 let image = PlotImage::new(
                     texture.id(),
-                    plot::Value::new(*input_width as f32 / 2.0, *input_height as f32 / 2.0),
+                    plot::PlotPoint::new(*input_width as f32 / 2.0, *input_height as f32 / 2.0),
                     [*input_width as f32, *input_height as f32],
                 )
                 .uv(Rect::from_min_max(Pos2::new(0.0, 1.0), Pos2::new(1.0, 0.0)));
@@ -219,9 +221,10 @@ fn update_texture(
         let image = ColorImage::from_rgba_unmultiplied([width, height], buffer);
         // TODO: only need to update a section of the texture as data is received. Should probably
         // change from updating per-pixel, to updating fixed-size chunks of the image as well.
-        ctx.tex_manager()
-            .write()
-            .set(texture.id(), ImageDelta::full(image));
+        ctx.tex_manager().write().set(
+            texture.id(),
+            ImageDelta::full(image, egui::TextureFilter::Nearest),
+        );
         ctx.request_repaint();
     }
 }

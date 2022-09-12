@@ -2,7 +2,7 @@
 members = ["crates/*"]
 
 [profile.release]
-lto = "on"
+lto = "thin"
 
 [profile.dev]
 opt-level = 3

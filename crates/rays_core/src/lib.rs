@@ -5,7 +5,6 @@ use glam::{Mat4, Vec3, Vec3A, Vec4, Vec4Swizzles};
 use material::Material;
 use ray::Ray;
 use rayon::prelude::*;
-use ringbuffer::{ConstGenericRingBuffer, RingBuffer, RingBufferExt, RingBufferWrite};
 use std::{f32::consts::PI, sync::Arc};
 
 pub mod color;
@@ -34,54 +33,70 @@ impl PathTracer {
     }
 
     pub fn run(self, scene: Scene, n_samples: usize, max_bounces: u8) -> Receiver<Pixel> {
+        // TODO: Make the allocated `Vec`s thread-local to avoid reallocating
         std::thread::spawn(move || {
-            (0..self.size[0] * self.size[1])
-                .par_bridge()
-                .for_each(|index| {
-                    let x = index % self.size[0];
-                    let y = index / self.size[0];
-                    let position = [x, y];
-
-                    let mut n_actual = None;
-                    let mut color = Color::from(Vec4::ZERO);
-                    let mut luma = ConstGenericRingBuffer::<f32, 64>::new();
-
-                    for i in 1..=n_samples {
-                        let u = ((x as f32 + fastrand::f32()) / self.size[0] as f32) * 2.0 - 1.0;
-                        let v = ((y as f32 + fastrand::f32()) / self.size[1] as f32) * 2.0 - 1.0;
-                        let ray = Ray::from_uv(&scene.camera, u, v);
-                        color += ray.color(&scene, max_bounces);
-                        // Early-out based on luminance convergence
-                        if matches!(i, 1..=64) || i % 32 == 0 {
-                            luma.push(color.approx_luminance() / i as f32);
-                            if !luma.is_full() {
-                                continue;
-                            }
-                            let mean = luma.iter().sum::<f32>() / luma.capacity() as f32;
-                            let sum_squares: f32 =
-                                luma.iter().map(|x| f32::powi(x - mean, 2)).sum();
-                            let variance = sum_squares / (luma.capacity() - 1) as f32;
-                            if variance <= f32::EPSILON {
-                                n_actual = Some(i);
-                                break;
-                            }
-                        }
+            let area = self.size[0] * self.size[1];
+            let skip = (1..=self.size[0] / 3)
+                .reduce(|div, i| {
+                    if self.size[0] % i == 0 && self.size[1] % i == 0 {
+                        i
+                    } else {
+                        div
                     }
+                })
+                .unwrap_or(1);
 
-                    // Gamma correction
-                    let n = n_actual.unwrap_or(n_samples) as f32;
-                    color = Vec4::new(
-                        (color.r() / n).sqrt(),
-                        (color.g() / n).sqrt(),
-                        (color.b() / n).sqrt(),
-                        color.a() / n,
-                    )
-                    .into();
+            (0..area).par_bridge().for_each(|index| {
+                let scaled_i = index * skip;
+                let j = (scaled_i % area) + (scaled_i / area);
 
-                    // convert to u8 range
-                    let color = color.into_bytes();
-                    self.sender.send(Pixel { position, color }).ok();
-                });
+                let y = j % self.size[1];
+                let x = j / self.size[1];
+
+                let position = [x, y];
+
+                let mut color = Color::from(Vec4::ZERO);
+                let mut last_luma = f32::INFINITY;
+                let mut i = 0;
+
+                for _ in 1..=n_samples {
+                    let u = ((x as f32 + fastrand::f32()) / self.size[0] as f32) * 2.0 - 1.0;
+                    let v = ((y as f32 + fastrand::f32()) / self.size[1] as f32) * 2.0 - 1.0;
+                    let ray = Ray::from_uv(&scene.camera, u, v);
+                    let new_color = ray.color(&scene, max_bounces);
+                    if new_color.inner.is_finite() {
+                        i += 1;
+                        color += new_color;
+                    } else {
+                        continue;
+                    }
+                    // Early-out based on luminance convergence
+                    if i % 64 == 0 {
+                        let luma = (&color / i as f32).approx_luminance();
+                        let delta = last_luma - luma;
+                        if delta.abs() <= f32::EPSILON * 10.0 {
+                            println!("early exit y: {y} n: {i}");
+                            break;
+                        }
+                        last_luma = luma;
+                    }
+                }
+
+                // Gamma correction
+                let n = i as f32;
+                color = color / n;
+                color = Vec4::new(
+                    color.r().sqrt(),
+                    color.g().sqrt(),
+                    color.b().sqrt(),
+                    color.a(),
+                )
+                .into();
+
+                // convert to u8 range
+                let color = color.into_bytes();
+                self.sender.send(Pixel { position, color }).ok();
+            });
         });
         self.receiver
     }
@@ -95,6 +110,7 @@ pub struct Camera {
 }
 impl Camera {
     /// Computes a ray in world space given the x and y coordinates of the target.
+    #[inline(always)]
     pub fn from_aspect_ratio(aspect_ratio: f32) -> Self {
         let inv_projection =
             Mat4::perspective_infinite_reverse_rh(PI / 2.0, aspect_ratio, 1.0).inverse();
@@ -113,10 +129,12 @@ pub struct SdfObject {
     material: Arc<dyn Material>,
 }
 impl Sdf for SdfObject {
+    #[inline(always)]
     fn distance(&self, from: Vec3A) -> f32 {
         self.isosurface.distance(from)
     }
 
+    #[inline(always)]
     fn normal(&self, ray_position: Vec3A) -> Vec3A {
         self.isosurface.normal(ray_position)
     }
@@ -161,10 +179,12 @@ impl Sphere {
     }
 }
 impl Sdf for Sphere {
+    #[inline(always)]
     fn distance(&self, ray_position: Vec3A) -> f32 {
         ray_position.distance(self.pos_rad.xyz().into()) - self.pos_rad.w
     }
 
+    #[inline(always)]
     fn normal(&self, ray_position: Vec3A) -> Vec3A {
         (ray_position - Vec3A::from(self.pos_rad.xyz())).normalize()
     }
